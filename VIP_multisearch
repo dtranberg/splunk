@@ -1,0 +1,21 @@
+credit Franklin Ng
+
+| multisearch
+ [search index=wineventlog source=WinEventLog:Security host=[domain controller] (EventCode=4624 OR EventCode=4625) 
+   | eval ComputerName=lower(ComputerName)
+   | lookup IS_DCResolution ComputerName OUTPUT ComputerAddress
+   | eval samAccountName=mvindex(Account_Name,1)
+   | fields _time,action,samAccountName,EventCode,Source_Network_Address,Source_Port,ComputerName,ComputerAddress,EventCodeDescription,dst_nt_domain]
+ [search index=network sourcetype=f5:bigip:syslog app=ldap | rename dvc_ip as Source_Network_Address,dvc_port as Source_Port,dest_ip as ComputerAddress
+   | fields _time,app,src_ip,Source_Network_Address,Source_Port,ComputerAddress]
+   | transaction Source_Network_Address,Source_Port,ComputerAddress maxspan=1s
+   | where (samAccountName NOT NULL)
+   | eval src_ip =coalesce(src_ip,Source_Network_Address)
+   | eval user=samAccountName, dest_dns=ComputerName, Message=EventCodeDescription, dest_nt_domain=dst_nt_domain
+   | where src_ip!="127.0.0.1" AND src_ip!="::1"
+   | where (app NOT NULL)
+   | lookup dnslookup clientip AS src_ip OUTPUT clienthost AS src_dns
+   | lookup dnslookup clienthost AS dest_dns OUTPUT clientip AS dest_ip 
+   | eval host=src_dns
+   | table _time,action,app,dest_nt_domain,user,EventCode,src_ip,src_dns,dest_ip,dest_dns,host,message
+   | collect index=wineventlog
